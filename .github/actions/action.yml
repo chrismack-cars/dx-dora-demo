@@ -1,0 +1,55 @@
+name: "DX Deploy Notify"
+description: "Notify DX of a deployment for DORA metrics tracking"
+
+inputs:
+  environment:
+    description: "Deployment environment (e.g., production, staging)"
+    required: true
+  service:
+    description: "Service name being deployed"
+    required: true
+    default: "dora-demo"
+  success:
+    description: "Whether the deployment was successful"
+    required: false
+    default: "true"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Notify DX of deployment
+      shell: bash
+      env:
+        DEPLOY_ENV: ${{ inputs.environment }}
+        SERVICE: ${{ inputs.service }}
+        SUCCESS: ${{ inputs.success }}
+        COMMIT_SHA: ${{ github.sha }}
+        REPOSITORY: ${{ github.repository }}
+        ACTOR: ${{ github.actor }}
+      run: |
+        DEPLOYED_AT=$(date +%s)
+
+        echo "   Notifying DX of deployment..."
+        echo "   Service: $SERVICE"
+        echo "   Environment: $DEPLOY_ENV"
+        echo "   Commit: $COMMIT_SHA"
+        echo "   Repository: $REPOSITORY"
+        echo "   Deployed by: $ACTOR"
+        echo "   Success: $SUCCESS"
+
+        RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+          -H "Authorization: Bearer $DX_API_KEY" \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "reference_id=${COMMIT_SHA}&service=${SERVICE}&repository=${REPOSITORY}&commit_sha=${COMMIT_SHA}&deployed_at=${DEPLOYED_AT}&github_username=${ACTOR}&success=${SUCCESS}&environment=${DEPLOY_ENV}" \
+          "$DX_ENDPOINT")
+
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        BODY=$(echo "$RESPONSE" | sed '$d')
+
+        if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+          echo "✅ DX notification successful (HTTP $HTTP_CODE)"
+        else
+          echo "❌ DX notification failed (HTTP $HTTP_CODE)"
+          echo "Response: $BODY"
+          exit 1
+        fi
